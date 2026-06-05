@@ -376,14 +376,14 @@ def main() -> None:
         
         # A. Actual Prices (실제가격)
         df_act = get_multiple_prices(current_codes, "actual", tf, start_date, end_date)
-        act_filename = f"Stock_{today_str}_actual_{label}.csv"
+        act_filename = f"Stock_actual_{label}_{today_str}.csv"
         act_path = os.path.join(OUTPUT_DIR, act_filename)
         df_act.to_csv(act_path, index=False, encoding="utf-8-sig")
         print(f"Saved actual prices to: {act_path} (rows: {len(df_act)})")
         
         # B. Adjusted Prices (수정가격)
         df_adj = get_multiple_prices(current_codes, "adjusted", tf, start_date, end_date)
-        adj_filename = f"Stock_{today_str}_adjusted_{label}.csv"
+        adj_filename = f"Stock_adjusted_{label}_{today_str}.csv"
         adj_path = os.path.join(OUTPUT_DIR, adj_filename)
         df_adj.to_csv(adj_path, index=False, encoding="utf-8-sig")
         print(f"Saved adjusted prices to: {adj_path} (rows: {len(df_adj)})")

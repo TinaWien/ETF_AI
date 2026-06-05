@@ -346,14 +346,14 @@ def main() -> None:
         
         # A. Actual Prices (실제가격)
         df_act = get_multiple_prices(code_list, "actual", tf, start_date, end_date)
-        act_filename = f"ETF_{today_str}_actual_{label}.csv"
+        act_filename = f"ETF_actual_{label}_{today_str}.csv"
         act_path = os.path.join(OUTPUT_DIR, act_filename)
         df_act.to_csv(act_path, index=False, encoding="utf-8-sig")
         print(f"Saved actual ETF prices to: {act_path} (rows: {len(df_act)})")
         
         # B. Adjusted Prices (수정가격)
         df_adj = get_multiple_prices(code_list, "adjusted", tf, start_date, end_date)
-        adj_filename = f"ETF_{today_str}_adjusted_{label}.csv"
+        adj_filename = f"ETF_adjusted_{label}_{today_str}.csv"
         adj_path = os.path.join(OUTPUT_DIR, adj_filename)
         df_adj.to_csv(adj_path, index=False, encoding="utf-8-sig")
         print(f"Saved adjusted ETF prices to: {adj_path} (rows: {len(df_adj)})")

@@ -15,7 +15,7 @@ def verify_history():
     
     for tf in timeframes:
         for pt in price_types:
-            filename = f"Stock_{today_str}_{pt}_{tf}.csv"
+            filename = f"Stock_{pt}_{tf}_{today_str}.csv"
             filepath = os.path.join(output_dir, filename)
             
             print(f"\nChecking file: {filename}")
