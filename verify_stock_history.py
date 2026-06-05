@@ -59,24 +59,12 @@ def verify_history():
                 continue
             print(" - Null check: OK")
             
-            # Date sorting check
-            # Convert Date to datetime for comparison
-            dates = pd.to_datetime(df['날짜'])
-            is_sorted = dates.is_monotonic_increasing
-            # Actually, because it is sorted by ['날짜', '종목코드'], dates should be monotonic or at least locally sorted
-            # Since multiple tickers are present on the same date, we check sorting by group
-            # Group by ticker and check if dates are monotonic increasing
-            ticker_groups = df.groupby('종목코드')
-            sorting_ok = True
-            for code, group in ticker_groups:
-                grp_dates = pd.to_datetime(group['날짜'])
-                if not grp_dates.is_monotonic_increasing:
-                    sorting_ok = False
-                    print(f" - Error: Date sorting fails for ticker {code}")
-                    break
-            if sorting_ok:
-                print(" - Date sorting: OK")
+            # Date & Ticker sorting check (Strict order check)
+            expected_sorted_df = df.sort_values(by=['날짜', '종목코드']).reset_index(drop=True)
+            if df.equals(expected_sorted_df):
+                print(" - Date & Ticker sorting: OK (strictly ordered by 날짜 & 종목코드)")
             else:
+                print(" - Error: Date & Ticker sorting check failed. The file is NOT strictly sorted.")
                 all_success = False
                 
             # Numeric ranges and logical checks
