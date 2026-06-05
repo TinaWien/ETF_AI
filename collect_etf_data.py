@@ -6,6 +6,7 @@
 """
 
 import os
+import logging
 import re
 import json
 import concurrent.futures
@@ -24,7 +25,7 @@ import yfinance as yf
 # 설정 및 상수 정의
 # ==============================================================================
 LIST_API_URL = "https://finance.naver.com/api/sise/etfItemList.nhn"
-DETAIL_PAGE_URL = "https://finance.naver.com/item/main.naver?code={code}"
+
 OUTPUT_DIR = "./output"
 
 HEADERS = {
@@ -183,7 +184,7 @@ def fetch_etf_detail(code: str, tab_code: int) -> Tuple[str, Optional[Dict[str, 
                 ticker = yf.Ticker(f"{code}.KS")
                 divs = ticker.dividends
                 if not divs.empty:
-                    recent_div = int(divs.iloc[-1])
+                    recent_div = int(round(divs.iloc[-1]))
             except Exception:
                 recent_div = 0
                 
@@ -201,7 +202,8 @@ def fetch_etf_detail(code: str, tab_code: int) -> Tuple[str, Optional[Dict[str, 
             "div_base_dt": div_base_dt if div_base_dt else "없음",
             "recent_div": recent_div
         }
-    except Exception:
+    except Exception as e:
+        logging.warning(f'[{code}] ETF detail fetch failed: {e}')
         return code, None
 
 

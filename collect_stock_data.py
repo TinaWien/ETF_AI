@@ -1,4 +1,5 @@
 import os
+import logging
 import re
 import json
 import time
@@ -15,12 +16,17 @@ from tqdm import tqdm
 # ==============================================================================
 # Constants & Headers
 # ==============================================================================
+OUTPUT_DIR = "./output"
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://finance.naver.com/"
 }
 
-# Global Session to reuse connections
+# Global Session to reuse connections.
+# Note: requests.Session is NOT fully thread-safe. However, it is used here with
+# ThreadPoolExecutor for concurrent GET requests, which works reliably in practice.
+# Avoid concurrent writes to session state (e.g., updating headers/cookies) from threads.
 session = requests.Session()
 session.headers.update(HEADERS)
 
@@ -383,7 +389,8 @@ def fetch_single_stock_detail(code: str) -> dict:
                 time.sleep(2 * (attempt + 1))
             else:
                 break
-        except Exception:
+        except Exception as e:
+            logging.warning(f'[{code}] detail fetch failed (API): {e}')
             time.sleep(1)
             
     # 2. Fetch from WiseFN page (WICS industry sector)
@@ -402,7 +409,8 @@ def fetch_single_stock_detail(code: str) -> dict:
                 time.sleep(2 * (attempt + 1))
             else:
                 break
-        except Exception:
+        except Exception as e:
+            logging.warning(f'[{code}] detail fetch failed (WiseFN): {e}')
             time.sleep(1)
             
     return detail
@@ -421,7 +429,7 @@ def fetch_stock_details_parallel(codes: list) -> pd.DataFrame:
                 if res:
                     details.append(res)
             except Exception as e:
-                pass
+                logging.warning(f'[{futures[future]}] detail fetch failed: {e}')
                 
     return pd.DataFrame(details)
 
@@ -443,10 +451,10 @@ def save_to_excel_with_style(df: pd.DataFrame, filepath: str):
         ws.append(list(row))
         
     font_family = "Malgun Gothic"
-    header_font = Font(name=font_family, size=10, bold=True, color="000000")
+    header_font = Font(name=font_family, size=10, bold=True, color="1E293B")
     data_font = Font(name=font_family, size=10, bold=False, color="000000")
     
-    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    header_fill = PatternFill(start_color="EDF2F7", end_color="EDF2F7", fill_type="solid")
     thin_border_side = Side(border_style="thin", color="D3D3D3")
     border_all = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
     
@@ -496,6 +504,7 @@ def save_to_excel_with_style(df: pd.DataFrame, filepath: str):
                 cell.number_format = "0.00" # Ratios
                 
     ws.views.sheetView[0].showGridLines = True
+    ws.auto_filter.ref = ws.dimensions
     
     # Auto-adjust column widths
     for col in ws.columns:
@@ -626,7 +635,7 @@ def main():
     
     # 6. Save Excel
     today_str = datetime.date.today().strftime("%Y%m%d")
-    output_path = os.path.join("/Users/tina/Documents/ETF_AI/output", f"Stock_{today_str}.xlsx")
+    output_path = os.path.join(OUTPUT_DIR, f"Stock_{today_str}.xlsx")
     save_to_excel_with_style(df_final, output_path)
     
     end_time = datetime.datetime.now()

@@ -13,3 +13,9 @@ __pycache__/
 venv/
 env/
 .venv/
+
+# Generated output files
+output/
+
+# Log files
+*.log

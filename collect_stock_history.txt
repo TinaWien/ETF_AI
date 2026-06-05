@@ -1,0 +1,39 @@
+collect_stock_history.py 실행 프롬프트
+
+목적: 국내 상장 주식의 과거 시세(OHLC)를 수집하여 6개 CSV 파일로 저장
+      일봉은 상위 N개 종목만, 주봉/월봉은 전체 종목 대상
+입력: CLI 인자 (--code, --top, --start, --end) 또는 Stock_YYYYMMDD.xlsx에서 자동 로드
+출력: ./output/ 디렉터리에 6개 CSV 파일 생성
+  - Stock_actual_daily_YYYYMMDD.csv     (상위 N개)
+  - Stock_adjusted_daily_YYYYMMDD.csv   (상위 N개)
+  - Stock_actual_weekly_YYYYMMDD.csv    (전체 종목)
+  - Stock_adjusted_weekly_YYYYMMDD.csv  (전체 종목)
+  - Stock_actual_monthly_YYYYMMDD.csv   (전체 종목)
+  - Stock_adjusted_monthly_YYYYMMDD.csv (전체 종목)
+
+실행: python collect_stock_history.py
+      python collect_stock_history.py --code 005930,000660
+      python collect_stock_history.py --top 200
+      python collect_stock_history.py --top all
+      python collect_stock_history.py --start 20230101 --end 20231231
+
+주요옵션:
+  --code   특정 종목코드 (쉼표 구분, 지정 시 모든 주기에서 해당 종목만)
+  --top    일봉 수집 시가총액 상위 N개 (기본값: 100, "all" 입력 시 전체)
+  --start  시작 날짜 YYYYMMDD (기본값: 1년 전)
+  --end    종료 날짜 YYYYMMDD (기본값: 오늘)
+
+CSV 컬럼 (7개): 날짜, 종목코드, 시가, 고가, 저가, 종가, 출처
+인코딩: utf-8-sig
+정렬: 날짜, 종목코드 오름차순
+
+데이터 소스 (3단계 폴백):
+  1. Naver Mobile API (m.stock.naver.com)
+  2. KRX (pykrx)
+  3. Yahoo Finance (yfinance)
+
+전제조건: collect_stock_data.py를 먼저 실행하여 Stock_YYYYMMDD.xlsx 생성 필요
+병렬 처리: ThreadPoolExecutor, max_workers=15
+데이터 정제: 0원 가격 → 종가 대체, 고가<저가 보정, 정수 변환
+
+의존성: requests, pandas, tqdm, yfinance, pykrx

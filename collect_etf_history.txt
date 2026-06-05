@@ -1,33 +1,34 @@
-국내에 상장된 ETF의 과거 시세 데이터(실제가격 및 수정주가)를 기간 및 주기별로 수집하고, 다음과 같은 디자인과 구조를 가진 이원화된 엑셀(.xlsx) 파일로 만들어주는 파이썬 스크립트(collect_etf_history.py)를 작성해줘.
+collect_etf_history.py 실행 프롬프트
 
-1. CLI 매개변수 옵션:
-- `--code`: 특정 ETF 종목코드 (지정하지 않으면 전체 ETF 수집)
-- `--start`: 시작 날짜 YYYYMMDD (미지정 시 "19900101" 대입하여 최초 상장일부터 수집)
-- `--end`: 종료 날짜 YYYYMMDD (미지정 시 실행 당일 날짜 대입)
-- `--timeframe`: 수집 주기 ('month' 또는 'day', 기본값: 'month')
-- `--output`: 출력 파일명 (미지정 시 'ETF_YYYYMMDD_Data.xlsx')
+목적: 국내 상장 ETF의 과거 시세(OHLC)를 수집하여 6개 CSV 파일로 저장
+입력: CLI 인자 (--code, --start, --end) 또는 전체 ETF 자동 조회
+출력: ./output/ 디렉터리에 6개 CSV 파일 생성
+  - ETF_actual_daily_YYYYMMDD.csv
+  - ETF_adjusted_daily_YYYYMMDD.csv
+  - ETF_actual_weekly_YYYYMMDD.csv
+  - ETF_adjusted_weekly_YYYYMMDD.csv
+  - ETF_actual_monthly_YYYYMMDD.csv
+  - ETF_adjusted_monthly_YYYYMMDD.csv
 
-2. 3단계 독립 폴백(Fallback) 수집 알고리즘 (종목별 적용):
-- [1단계] 네이버 금융 모바일 차트 API: 'https://m.stock.naver.com/front-api/external/chart/domestic/info?symbol={code}&requestType=1&startTime={start_date}&endTime={end_date}&timeframe={timeframe}' 호출 후 파싱.
-- [2단계] KRX (pykrx): 5년 단위 청크로 분할 수집하여 합산 (조회 실패/누락 방지). 월별 주기 조회 시 일별 수집 후 resample('M') 가공. (실제가격은 adjusted=False, 수정주가는 adjusted=True 적용)
-- [3단계] Yahoo Finance (yfinance): '{code}.KS'로 조회. 수정주가 수집 시 'Adj Close'와 'Close'의 비율을 활용해 OHLC 가격 재계산.
+실행: python collect_etf_history.py
+      python collect_etf_history.py --code 069500,360750
+      python collect_etf_history.py --start 20230101 --end 20231231
 
-3. 엑셀 구조 및 저장 방식:
-- './output' 폴더에 두 개의 시트로 저장: '실제가격' (Unadjusted), '수정주가' (Adjusted)
-- 컬럼 구조 (두 시트 공통):
-  - 날짜 (YYYY-MM-DD, 가운데 정렬)
-  - 종목코드 (가운데 정렬, '@' 텍스트 서식 강제)
-  - 시가, 고가, 저가, 종가 (오른쪽 정렬, '형변환 완료 후 #,##0' 천 단위 구분 쉼표 서식)
-  - 출처 (수집 성공한 소스 'Naver', 'KRX', 'Yahoo' 중 표기, 가운데 정렬)
+주요옵션:
+  --code   특정 ETF 종목코드 (쉼표 구분, 미지정 시 전체 ETF)
+  --start  시작 날짜 YYYYMMDD (기본값: 1년 전)
+  --end    종료 날짜 YYYYMMDD (기본값: 오늘)
 
-4. 엑셀 디자인 서식 가이드:
-- 모든 셀의 글꼴은 '맑은 고딕(Malgun Gothic)' 크기 10으로 지정.
-- 눈금선(그리드)이 항상 보이도록 설정 (showGridLines = True).
-- 첫 행(헤더)은 높이 25, 배경색 #EDF2F7, 글자색 #1E293B (굵게), 가운데 정렬, 자동 필터(AutoFilter) 적용.
-- 데이터 행들의 기본 높이는 20으로 설정하고, 모든 셀에 #CBD5E1 색상의 얇은(thin) 테두리 선 적용.
-- 각 열의 너비는 데이터의 최대 글자 수에 맞게 자동 조절하고, 한글은 자수 보정(글자당 2) 및 마진 +4를 더해 텍스트 잘림을 방지 (최솟값 12 제한).
+CSV 컬럼 (7개): 날짜, 종목코드, 시가, 고가, 저가, 종가, 출처
+인코딩: utf-8-sig
+정렬: 날짜, 종목코드 오름차순
 
-5. 기술적 요구사항:
-- 다량의 종목 시세 수집에 대비해 ThreadPoolExecutor(max_workers=20)를 사용해 병렬 처리.
-- tqdm 진행 상황 바 표시.
-- 수집된 데이터는 날짜 및 종목코드 기준으로 정렬.
+데이터 소스 (3단계 폴백):
+  1. Naver Mobile API (m.stock.naver.com)
+  2. KRX (pykrx)
+  3. Yahoo Finance (yfinance)
+
+병렬 처리: ThreadPoolExecutor, max_workers=20
+데이터 정제: 0원 가격 보정, 고가<저가 보정, 정수 변환
+
+의존성: requests, pandas, tqdm, yfinance, pykrx

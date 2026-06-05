@@ -6,7 +6,8 @@ import openpyxl
 def verify_report():
     print("=== Starting Detailed Excel Verification ===")
     today_str = datetime.date.today().strftime("%Y%m%d")
-    filepath = f"/Users/tina/Documents/ETF_AI/output/Stock_{today_str}.xlsx"
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
+    filepath = os.path.join(output_dir, f"Stock_{today_str}.xlsx")
     
     # 1. Existence check
     if not os.path.exists(filepath):
@@ -107,7 +108,13 @@ def verify_report():
             return False
         print("Grid lines: OK (Enabled)")
         
-        # Header check (Row 1)
+        # Auto-filter check
+        if not ws.auto_filter.ref:
+            print("Error: Autofilter is not enabled!")
+            return False
+        print(f"Autofilter check: OK (Range: {ws.auto_filter.ref})")
+        
+        # Header check (Row 1) — expects EDF2F7 background and 1E293B text color
         for col_idx in range(1, len(expected_cols) + 1):
             cell = ws.cell(row=1, column=col_idx)
             if cell.font.name != "Malgun Gothic":
@@ -117,21 +124,24 @@ def verify_report():
                 print("Error: Header font is not Bold.")
                 return False
             fill_color = cell.fill.start_color.rgb
-            if fill_color not in ["00D9E1F2", "FFD9E1F2"]:
-                print(f"Error: Header fill color is {fill_color}, expected D9E1F2.")
+            if fill_color not in ["00EDF2F7", "FFEDF2F7", "EDF2F7"]:
+                print(f"Error: Header fill color is {fill_color}, expected EDF2F7.")
                 return False
-        print("Header fonts & colors: OK")
+            font_color = cell.font.color.rgb if cell.font.color else None
+            if font_color and font_color not in ["001E293B", "FF1E293B", "1E293B"]:
+                print(f"Error: Header font color is {font_color}, expected 1E293B.")
+                return False
+        print("Header fonts & colors: OK (EDF2F7 fill, 1E293B text)")
         
-        # Data format check (Row 2, Samsung should be first or second row as it has highest market cap)
-        # We will find the Samsung row in excel
+        # Data format check — search ALL data rows for Samsung (005930)
         sam_row_idx = None
-        for r in range(2, 10):
+        for r in range(2, ws.max_row + 1):
             if ws.cell(row=r, column=1).value == "005930":
                 sam_row_idx = r
                 break
                 
         if not sam_row_idx:
-            print("Error: Could not find Samsung row in top market cap items in Excel.")
+            print("Error: Could not find Samsung (005930) row in Excel.")
             return False
             
         # Code format

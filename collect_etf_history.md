@@ -1,103 +1,133 @@
-# 국내 상장 ETF 과거 시세 수집 및 엑셀 출력 요구사항 및 설계 명세서
+# collect_etf_history.py 작업지시서
 
-본 문서는 국내에 상장된 ETF의 과거 시세 데이터(실제가격 및 수정주가)를 기간 및 주기(일별/월별)별로 수집하여 두 개의 시트를 가진 디자인된 엑셀 파일(`.xlsx`)로 출력하는 파이썬 스크립트(`collect_etf_history.py`)를 개발하기 위한 상세 설계 문서입니다. 이 문서에 정리된 요구사항을 바탕으로 타 LLM 또는 개발자가 동일한 동작을 수행하는 파이썬 코드를 처음부터 완벽하게 재작성할 수 있습니다.
+## 개요
 
----
+국내 상장 ETF의 과거 시세(OHLC) 데이터를 수집하여 **6개의 CSV 파일**(실제가격/수정가격 × 일봉/주봉/월봉)로 저장하는 스크립트입니다.
 
-## 1. 개요 및 목적
-국내 상장된 ETF(단일 종목 혹은 전체 종목)의 과거 시세 데이터를 수집합니다. 수집 시 데이터 정합성과 안정성을 보장하기 위해 3단계 데이터 소스 폴백(Fallback) 구조를 사용하며, 최종 가격 데이터는 "실제가격(Unadjusted)"과 "수정주가(Adjusted)" 두 가지 버전으로 구분하여 엑셀 시트에 각각 저장하고 세련된 디자인 서식을 입힙니다.
+3단계 폴백(Naver Mobile → KRX(pykrx) → Yahoo Finance)을 통해 데이터 수집 신뢰성을 확보하며, 수집된 가격 데이터는 정제(sanitize) 처리 후 날짜·종목코드 기준 오름차순 정렬하여 저장합니다.
 
-- **데이터 수집 대상**: 단일 종목 코드(인자 입력) 또는 전체 상장 ETF 종목
-- **수집 기간 및 주기**: 시작일(기본: 최초 상장일) ~ 종료일(기본: 현재 날짜), 수집 주기(일별 또는 월별)
-- **최종 출력 경로**: `./output/ETF_실행날짜(YYYYMMDD)_Data.xlsx` (예: `./output/ETF_20260605_Data.xlsx`)
-- **주요 기능**: 개별 종목별 독립 3단계 폴백 수집, 가격 조정 방식에 따른 시트 이원화, 최종 셀 디자인 및 자동 열 너비 보정.
+## 데이터 소스
 
----
+3단계 폴백(fallback) 방식으로 데이터를 수집합니다. 1번 소스 실패 시 2번, 2번 실패 시 3번 순서로 시도합니다.
 
-## 2. 세부 수집 프로세스 및 데이터 소스
+| 우선순위 | 데이터 소스 | URL / 방식 | 비고 |
+|---|---|---|---|
+| 1 | **Naver Mobile API** | `https://m.stock.naver.com/front-api/external/chart/domestic/info?symbol={code}&requestType=1&startTime={start}&endTime={end}&timeframe={tf}` | `ast.literal_eval`로 응답 파싱, timeframe 파라미터로 일/주/월 직접 지정 |
+| 2 | **KRX (pykrx)** | `stock.get_market_ohlcv_by_date()` | 5년 단위 청크 분할 조회, 주/월봉은 pandas `resample` 사용 |
+| 3 | **Yahoo Finance** | `yfinance.Ticker("{code}.KS").history()` | `auto_adjust=False`, 수정가 시 `Adj Close` 비율 적용 |
 
-### 2.1. 전체 ETF 목록 조회 (전체 수집 시)
-인자로 특정 종목코드가 주어지지 않은 경우, 전체 ETF 목록을 API를 통해 가져옵니다.
-- **호출 URL**: `https://finance.naver.com/api/sise/etfItemList.nhn`
-- **호출 방식**: HTTP GET
+### ETF 목록 조회
 
-### 2.2. 종목별 독립 3단계 폴백(Fallback) 수집 알고리즘
-각 ETF 종목 코드별로 시세를 수집할 때, 네트워크 차단이나 데이터 누락에 대응하여 아래 3개 소스를 순차적으로 호출합니다. 한 소스에서 성공적으로 데이터를 가져오면 하위 소스는 호출하지 않습니다.
+`--code` 미지정 시, 네이버 금융 API(`https://finance.naver.com/api/sise/etfItemList.nhn`)에서 전체 ETF 목록을 가져옵니다.
 
-#### [1단계] 네이버 금융 모바일 차트 API
-- **호출 URL**: `https://m.stock.naver.com/front-api/external/chart/domestic/info?symbol={code}&requestType=1&startTime={start_date}&endTime={end_date}&timeframe={timeframe}`
-  - `{timeframe}`: `'day'` (일별) 또는 `'month'` (월별)
-- **호출 방식**: HTTP GET (헤더에 브라우저 User-Agent 설정 필수)
-- **파싱 규칙**: 
-  - 응답 본문은 작은따옴표로 묶인 비표준 JSON 포맷의 이중 리스트 형태입니다. 파이썬의 `ast.literal_eval`을 활용하여 객체로 변환합니다.
-  - 첫 번째 행은 컬럼 명세(`['날짜', '시가', '고가', '저가', '종가', ... ]`), 이후 행들은 데이터 값입니다.
-  - 네이버 금융은 수정주가 데이터를 기본 제공하므로, 실제가격/수정주가 요청 모두 동일하게 처리합니다.
+## 수집 항목 (컬럼)
 
-#### [2단계] KRX (pykrx 라이브러리)
-네이버 금융 API 수집에 실패했을 경우, `pykrx` 라이브러리를 사용해 수집을 시도합니다.
-- **호출 방식**: 
-  - 실제가격 조회: `stock.get_market_ohlcv_by_date(start_date, end_date, code, adjusted=False)`
-  - 수정주가 조회: `stock.get_market_ohlcv_by_date(start_date, end_date, code, adjusted=True)`
-- **안정성 강화 (청킹)**:
-  - 수집 기간이 길 경우 데이터 누락 및 타임아웃을 방지하기 위해 조회 기간을 **5년 단위 청크(Chunk)**로 분할하여 루프를 돌며 수집하고, 결과를 최종적으로 합산(concatenation)합니다.
-  - 월별 조회의 경우 일별 시세 수집 후 판다스 Resample 연산(`resample('M')`)을 활용하여 월말 기준 시가(First), 고가(Max), 저가(Min), 종가(Last)로 가공합니다.
+각 CSV 파일은 **7개 컬럼**으로 구성됩니다:
 
-#### [3단계] Yahoo Finance (yfinance 라이브러리)
-네이버 및 KRX 수집에 모두 실패했을 경우, 최종 폴백으로 `yfinance`를 사용해 수집을 시도합니다.
-- **호출 방식**: `yf.Ticker(f"{code}.KS")` 인스턴스 생성 후 `history` 메서드를 호출합니다.
-  - 인자 설정: `start=start_date_iso`, `end=end_date_iso`, `interval="1d"`(일별) 또는 `"1mo"`(월별), `auto_adjust=False`
-- **수정주가 처리**:
-  - `price_type == 'adjusted'`이고 데이터프레임 내에 `'Adj Close'` 컬럼이 존재할 경우, 배당 등으로 인한 주가 조정 비율(`Adj Close / Close`)을 계산하여 시가/고가/저가/종가 전체에 해당 비율을 곱해 수정주가 구조를 완성합니다.
+| # | 컬럼명 | 설명 |
+|---|---|---|
+| 1 | 날짜 | 거래일 (YYYY-MM-DD 형식) |
+| 2 | 종목코드 | 6자리 ETF 종목코드 |
+| 3 | 시가 | 시가 (정수) |
+| 4 | 고가 | 고가 (정수) |
+| 5 | 저가 | 저가 (정수) |
+| 6 | 종가 | 종가 (정수) |
+| 7 | 출처 | 데이터 소스 (Naver / KRX / Yahoo) |
 
----
+## 출력 형식
 
-## 3. 데이터 전처리 및 아키텍처 규칙
+총 **6개의 CSV 파일**이 `./output/` 디렉터리에 생성됩니다:
 
-### 3.1. CLI 매개변수 명세 (`argparse` 구현)
-스크립트 실행 시 다음 옵션을 지원합니다.
-- `--code`: 특정 ETF 종목코드 (예: `069500`). 지정하지 않으면 전체 ETF를 수집합니다.
-- `--start`: 시작 날짜 (YYYYMMDD 형식). 지정하지 않으면 `"19900101"`을 기본값으로 사용하고 최종 데이터는 최초 상장일부터 표시됩니다.
-- `--end`: 종료 날짜 (YYYYMMDD 형식). 지정하지 않으면 실행 날짜(오늘)가 기본값으로 적용됩니다.
-- `--timeframe`: 수집 주기. `month`(기본값) 또는 `day` 중 선택합니다.
-- `--output`: 출력 파일명. 지정하지 않으면 `ETF_YYYYMMDD_Data.xlsx` 형식으로 저장됩니다.
+| 파일명 패턴 | 가격 유형 | 주기 |
+|---|---|---|
+| `ETF_actual_daily_YYYYMMDD.csv` | 실제가격 | 일봉 |
+| `ETF_adjusted_daily_YYYYMMDD.csv` | 수정가격 | 일봉 |
+| `ETF_actual_weekly_YYYYMMDD.csv` | 실제가격 | 주봉 |
+| `ETF_adjusted_weekly_YYYYMMDD.csv` | 수정가격 | 주봉 |
+| `ETF_actual_monthly_YYYYMMDD.csv` | 실제가격 | 월봉 |
+| `ETF_adjusted_monthly_YYYYMMDD.csv` | 수정가격 | 월봉 |
 
-### 3.2. 병렬 수집 구현
-- 여러 종목의 시세를 효율적으로 수집하기 위해 `concurrent.futures.ThreadPoolExecutor(max_workers=20)`를 사용합니다.
-- 수집 진행 과정을 콘솔에 진행률 표시 바(`tqdm`) 형태로 시각화합니다.
-- 조회 대상 날짜 범위에 맞게 데이터를 최종 필터링하고 날짜 및 종목코드 순으로 오름차순 정렬을 적용합니다.
+- **인코딩**: `utf-8-sig` (BOM 포함 UTF-8, 한글 호환)
+- **정렬**: `날짜`, `종목코드` 기준 오름차순
+- **날짜 형식**: `YYYY-MM-DD`
+- **파일명의 YYYYMMDD**: 스크립트 실행일 기준
 
----
+## 실행 방법
 
-## 4. 엑셀 쓰기 및 디자인 스타일링 규칙
+```bash
+# 전체 ETF, 최근 1년간 시세 수집 (기본값)
+python collect_etf_history.py
 
-### 4.1. 시트 구성 및 컬럼 명세
-최종 생성되는 엑셀 파일은 아래 **두 개의 시트**를 필수로 포함해야 합니다.
-1. **`실제가격`**: 실제 가격(Unadjusted) 기준 시세 데이터 시트
-2. **`수정주가`**: 수정 주가(Adjusted) 기준 시세 데이터 시트
+# 특정 종목만 수집
+python collect_etf_history.py --code 069500,360750
 
-두 시트의 컬럼 명세 및 스타일링 규칙은 동일합니다:
+# 기간 지정
+python collect_etf_history.py --start 20230101 --end 20231231
 
-| 번호 | 컬럼명 | 내용 설명 | 데이터 정렬 | 서식 형식 (Number Format) |
-| :--- | :--- | :--- | :--- | :--- |
-| 1 | **날짜** | 시세 기준일 (YYYY-MM-DD) | 가운데 정렬 | 일반 텍스트 |
-| 2 | **종목코드** | ETF 티커 (6자리) | 가운데 정렬 | `@` (텍스트 형식 강제) |
-| 3 | **시가** | 거래 시작 가격 | 오른쪽 정렬 | `#,##0` (천 단위 쉼표 정수) |
-| 4 | **고가** | 거래 최고 가격 | 오른쪽 정렬 | `#,##0` (천 단위 쉼표 정수) |
-| 5 | **저가** | 거래 최저 가격 | 오른쪽 정렬 | `#,##0` (천 단위 쉼표 정수) |
-| 6 | **종가** | 거래 종료 가격 | 오른쪽 정렬 | `#,##0` (천 단위 쉼표 정수) |
-| 7 | **출처** | 수집 성공한 API 소스 (`Naver`, `KRX`, `Yahoo`) | 가운데 정렬 | 일반 텍스트 |
+# 특정 종목 + 기간 지정
+python collect_etf_history.py --code 069500 --start 20200101 --end 20241231
+```
 
-### 4.2. 디자인 스타일 상세 사양
-1. **공통 폰트**: 모든 셀의 폰트명을 `"Malgun Gothic"` (맑은 고딕)으로 설정하고 크기는 `10`으로 지정합니다.
-2. **눈금선 표시**: 엑셀 기본 눈금선이 강제로 활성화되도록 속성을 설정합니다 (`ws.views.sheetView[0].showGridLines = True`).
-3. **헤더 스타일**:
-   - 1행(헤더 행)의 높이를 `25`로 설정합니다.
-   - 텍스트 색은 `"1E293B"`(어두운 감청색), 굵게(bold), 가운데 정렬을 지정합니다.
-   - 채우기 색(PatternFill)은 `"EDF2F7"` (옅은 그레이/블루 계열)을 적용하고 오토필터(`AutoFilter`)를 적용합니다.
-4. **데이터 스타일**:
-   - 데이터 행들의 높이는 `defaultRowHeight = 20` 속성을 활용해 균일하게 설정합니다.
-   - 모든 셀 사방에 `"CBD5E1"`(옅은 회색) 색상의 얇은(thin) 테두리를 적용합니다.
-5. **열 너비 자동 맞춤**:
-   - 각 열에 포함된 값의 가장 긴 텍스트 길이에 맞춰 열 너비를 설정합니다.
-   - 판다스 데이터프레임 내에서 한글 글자 가중치(아스키 127 초과 시 길이 2, 그 외 1)를 반영하여 최대 길이를 빠르게 계산합니다. 계산 과정에서 null/NaN값은 `fillna("")`를 통해 빈 문자열로 처리해 오차를 방지합니다.
-   - 최솟값은 12로 제한하고 가독성을 위해 마진 `+4`를 추가 적용합니다.
+## CLI 인자
+
+| 인자 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `--code` | str | None (전체 ETF) | 특정 ETF 종목코드 (쉼표 구분 가능, 예: `069500,360750`) |
+| `--start` | str | 1년 전 (`YYYYMMDD`) | 시작 날짜 (YYYYMMDD 형식) |
+| `--end` | str | 오늘 (`YYYYMMDD`) | 종료 날짜 (YYYYMMDD 형식) |
+
+### 날짜 입력 파싱
+
+- 숫자가 아닌 문자는 모두 제거하여 8자리 숫자만 추출합니다.
+- 8자리가 아닌 경우 기본값을 사용합니다.
+
+## 동작 흐름
+
+```
+1. CLI 인자 파싱 및 날짜 설정
+   ├─ --start / --end 파싱 (기본값: 1년 전 ~ 오늘)
+   └─ --code 지정 시 해당 종목만, 미지정 시 네이버 API에서 전체 ETF 목록 조회
+
+2. 시세 데이터 수집 (3개 주기 × 2개 가격유형 = 6회 반복)
+   ├─ 주기: day → week → month
+   └─ 각 주기마다 actual(실제가격)과 adjusted(수정가격) 2회 수집
+
+3. 개별 종목 시세 수집 (3단계 폴백)
+   ├─ 1차: Naver Mobile API 시도
+   ├─ 2차: 실패 시 KRX(pykrx) 시도
+   │   ├─ 5년 단위 청크 분할 조회
+   │   └─ 주/월봉은 resample('W' / 'M')로 집계
+   └─ 3차: 실패 시 Yahoo Finance 시도
+       └─ 수정가격 시 Adj Close / Close 비율을 OHLC에 적용
+
+4. 데이터 정제 (sanitize_and_fix_prices)
+   ├─ 종가 0 또는 NaN인 행 제거
+   ├─ 시가/고가/저가가 0이면 종가로 대체
+   ├─ 고가 < 저가인 행 보정 (4개 가격의 max/min 재계산)
+   └─ 모든 가격 정수 변환
+
+5. 병합 및 저장
+   ├─ 병렬 수집 (ThreadPoolExecutor, max_workers=20)
+   ├─ 날짜·종목코드 기준 오름차순 정렬
+   └─ CSV 저장 (utf-8-sig 인코딩)
+```
+
+## 의존성
+
+| 패키지 | 용도 |
+|---|---|
+| `requests` | HTTP 요청 (Naver Mobile API, ETF 목록 API) |
+| `pandas` | DataFrame 처리, resample, CSV 저장 |
+| `tqdm` | 진행률 표시 |
+| `yfinance` | Yahoo Finance 시세 조회 |
+| `pykrx` | KRX 시세 조회 |
+
+## 주의사항
+
+1. **Naver Mobile API 파싱**: 응답이 JSON이 아닌 Python 리터럴 형식이므로 `ast.literal_eval`로 파싱합니다. 응답이 빈 배열(`[[]]`)이거나 "날짜" 컬럼이 없으면 실패로 처리합니다.
+2. **KRX 5년 제한**: pykrx는 한 번에 5년 이상의 데이터를 조회하면 오류가 발생할 수 있으므로, 5년(`5 * 365일`) 단위로 청크 분할하여 조회합니다.
+3. **KRX resample 주의**: 월봉 리샘플링 시 `'M'` (deprecated) 대신 `'ME'`를 사용합니다.
+4. **수정가격 처리**: Yahoo Finance에서만 `Adj Close`를 활용하여 수정가격을 계산합니다. KRX는 `adjusted=True` 플래그로 수정주가를 직접 조회합니다. Naver Mobile API는 actual/adjusted 구분이 없으며 기본 시세를 반환합니다.
+5. **HTTP 세션 관리**: `requests.Session()`에 커넥션 풀 30개를 설정하여 대량 병렬 요청 성능을 최적화합니다.
+6. **데이터 정제**: `sanitize_and_fix_prices` 함수에서 0원 가격, NaN, 고가 < 저가 등의 비정상 데이터를 자동 보정합니다.
+7. **날짜 범위 필터**: 폴백으로 받은 데이터 중 지정된 start~end 범위를 벗어나는 행은 제거합니다.

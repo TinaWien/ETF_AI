@@ -1,4 +1,5 @@
 import os
+import logging
 import re
 import ast
 import argparse
@@ -64,13 +65,7 @@ def fetch_from_naver(code: str, timeframe: str, start_date: str, end_date: str, 
         rows = data[1:]
         df = pd.DataFrame(rows, columns=columns)
         
-        df = df.rename(columns={
-            '날짜': '날짜',
-            '시가': '시가',
-            '고가': '고가',
-            '저가': '저가',
-            '종가': '종가'
-        })
+
         
         df['날짜'] = df['날짜'].apply(lambda x: f"{x[:4]}-{x[4:6]}-{x[6:]}")
         df['종목코드'] = code
@@ -81,7 +76,8 @@ def fetch_from_naver(code: str, timeframe: str, start_date: str, end_date: str, 
             
         df = df[['날짜', '종목코드', '시가', '고가', '저가', '종가', '출처']]
         return df
-    except Exception:
+    except Exception as e:
+        logging.warning(f'[{code}] Naver fetch failed: {e}')
         return None
 
 def fetch_from_krx(code: str, timeframe: str, start_date: str, end_date: str, price_type: str) -> Optional[pd.DataFrame]:
@@ -106,8 +102,8 @@ def fetch_from_krx(code: str, timeframe: str, start_date: str, end_date: str, pr
                 df_chunk = df_chunk[(df_chunk['시가'] > 0) & (df_chunk['종가'] > 0)]
                 if not df_chunk.empty:
                     dfs.append(df_chunk)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f'[{code}] KRX chunk fetch failed: {e}')
             
         curr_start = curr_end + timedelta(days=1)
         
@@ -130,7 +126,7 @@ def fetch_from_krx(code: str, timeframe: str, start_date: str, end_date: str, pr
         })
         df = df.dropna(subset=['시가', '고가', '저가', '종가'])
     elif timeframe == 'month':
-        df = df.resample('M').agg({
+        df = df.resample('ME').agg({
             '시가': 'first',
             '고가': 'max',
             '저가': 'min',
@@ -154,7 +150,6 @@ def fetch_from_yahoo(code: str, timeframe: str, start_date: str, end_date: str, 
     start_iso = to_iso_format(start_date)
     end_iso = to_iso_format(end_date)
     
-    ticker_symbol = f"{code}.KS"
     if timeframe == "month":
         interval = "1mo"
     elif timeframe == "week":
@@ -162,40 +157,45 @@ def fetch_from_yahoo(code: str, timeframe: str, start_date: str, end_date: str, 
     else:
         interval = "1d"
     
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(start=start_iso, end=end_iso, interval=interval, auto_adjust=False)
-        if df is None or df.empty:
-            return None
+    # Try KOSPI (.KS) first, then KOSDAQ (.KQ)
+    for suffix in ('.KS', '.KQ'):
+        ticker_symbol = f"{code}{suffix}"
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            df = ticker.history(start=start_iso, end=end_iso, interval=interval, auto_adjust=False)
+            if df is None or df.empty:
+                continue
+                
+            df = df.reset_index()
             
-        df = df.reset_index()
-        
-        if price_type == 'adjusted' and 'Adj Close' in df.columns:
-            ratio = (df['Adj Close'] / df['Close']).fillna(1.0)
-            df['Open'] = df['Open'] * ratio
-            df['High'] = df['High'] * ratio
-            df['Low'] = df['Low'] * ratio
-            df['Close'] = df['Adj Close']
+            if price_type == 'adjusted' and 'Adj Close' in df.columns:
+                ratio = (df['Adj Close'] / df['Close']).fillna(1.0)
+                df['Open'] = df['Open'] * ratio
+                df['High'] = df['High'] * ratio
+                df['Low'] = df['Low'] * ratio
+                df['Close'] = df['Adj Close']
+                
+            df = df.rename(columns={
+                'Date': '날짜',
+                'Open': '시가',
+                'High': '고가',
+                'Low': '저가',
+                'Close': '종가'
+            })
             
-        df = df.rename(columns={
-            'Date': '날짜',
-            'Open': '시가',
-            'High': '고가',
-            'Low': '저가',
-            'Close': '종가'
-        })
-        
-        df['날짜'] = pd.to_datetime(df['날짜']).dt.strftime('%Y-%m-%d')
-        df['종목코드'] = code
-        df['출처'] = 'Yahoo'
-        
-        for col in ['시가', '고가', '저가', '종가']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').round().fillna(0).astype(int)
+            df['날짜'] = pd.to_datetime(df['날짜']).dt.strftime('%Y-%m-%d')
+            df['종목코드'] = code
+            df['출처'] = 'Yahoo'
             
-        df = df[['날짜', '종목코드', '시가', '고가', '저가', '종가', '출처']]
-        return df
-    except Exception:
-        return None
+            for col in ['시가', '고가', '저가', '종가']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').round().fillna(0).astype(int)
+                
+            df = df[['날짜', '종목코드', '시가', '고가', '저가', '종가', '출처']]
+            return df
+        except Exception as e:
+            logging.warning(f'[{code}] Yahoo fetch failed ({ticker_symbol}): {e}')
+            continue
+    return None
 
 # ==============================================================================
 # Fallback Loop & Sanitization
@@ -234,21 +234,24 @@ def get_single_ticker_price(code: str, price_type: str, timeframe: str, start_da
     # 1. Naver
     try:
         df = fetch_from_naver(code, timeframe, start_date, end_date, price_type)
-    except Exception:
+    except Exception as e:
+        logging.warning(f'[{code}] Naver fallback failed: {e}')
         df = None
         
     # 2. KRX
     if df is None or df.empty:
         try:
             df = fetch_from_krx(code, timeframe, start_date, end_date, price_type)
-        except Exception:
+        except Exception as e:
+            logging.warning(f'[{code}] KRX fallback failed: {e}')
             df = None
             
     # 3. Yahoo
     if df is None or df.empty:
         try:
             df = fetch_from_yahoo(code, timeframe, start_date, end_date, price_type)
-        except Exception:
+        except Exception as e:
+            logging.warning(f'[{code}] Yahoo fallback failed: {e}')
             df = None
             
     if df is not None and not df.empty:

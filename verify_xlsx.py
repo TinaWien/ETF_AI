@@ -1,9 +1,13 @@
 import os
+import sys
 import glob
 import re
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# Minimum number of ETFs we expect in the output file.
+# As of 2024, there are ~800+ ETFs listed on KRX, so this is a reasonable lower bound.
+MIN_EXPECTED_ETFS = 800
 
 print("=== ETF Metadata Excel File Verification ===")
 
@@ -18,7 +22,7 @@ for f in output_files:
 
 if not valid_files:
     print("Error: No generated ETF metadata Excel files (ETF_YYYYMMDD.xlsx) found in output/!")
-    exit(1)
+    sys.exit(1)
     
 file_path = max(valid_files, key=os.path.getmtime)
 print(f"Excel file selected for verification: {file_path}")
@@ -30,21 +34,21 @@ print(f"Sheet names: {sheet_names}")
 
 if len(sheet_names) != 1 or sheet_names[0] != "Sheet1":
     print("Error: Excel should contain exactly one sheet named 'Sheet1'!")
-    exit(1)
+    sys.exit(1)
     
 ws = wb["Sheet1"]
 
 # Verify showGridLines
 if not ws.views.sheetView[0].showGridLines:
     print("Error: Gridlines are not visible!")
-    exit(1)
+    sys.exit(1)
 else:
     print("Gridlines check: OK (Visible)")
 
 # Verify Autofilter
 if not ws.auto_filter.ref:
     print("Error: Autofilter is not enabled!")
-    exit(1)
+    sys.exit(1)
 else:
     print(f"Autofilter check: OK (Range: {ws.auto_filter.ref})")
 
@@ -64,7 +68,7 @@ if df.columns.tolist() != expected_cols:
     print(f"Error: Columns mismatch!")
     print(f"Expected ({len(expected_cols)}): {expected_cols}")
     print(f"Got ({len(df.columns)}): {df.columns.tolist()}")
-    exit(1)
+    sys.exit(1)
 else:
     print("Column headers check: OK")
 
@@ -73,7 +77,7 @@ null_code = df["종목코드"].isnull().sum()
 null_name = df["종목명"].isnull().sum()
 if null_code > 0 or null_name > 0:
     print(f"Warning: Found nulls! Null codes: {null_code}, Null names: {null_name}")
-    exit(1)
+    sys.exit(1)
 else:
     print("Key columns null check: OK")
 
@@ -90,19 +94,19 @@ for col_idx in range(1, len(expected_cols) + 1):
     # Font
     if cell.font.name != "Malgun Gothic" or cell.font.size != 10 or not cell.font.bold:
         print(f"Error: Header cell at col {col_idx} has incorrect font: {cell.font.name}, size={cell.font.size}, bold={cell.font.bold}")
-        exit(1)
+        sys.exit(1)
     # Fill
     if cell.fill.start_color.rgb != "00EDF2F7" and cell.fill.start_color.rgb != "EDF2F7":
         print(f"Error: Header cell at col {col_idx} has incorrect fill color: {cell.fill.start_color.rgb}")
-        exit(1)
+        sys.exit(1)
     # Border
     if not cell.border.left or cell.border.left.style != 'thin':
         print(f"Error: Header cell at col {col_idx} does not have thin border")
-        exit(1)
+        sys.exit(1)
     # Alignment
     if cell.alignment.horizontal != 'center' or cell.alignment.vertical != 'center':
         print(f"Error: Header cell at col {col_idx} has incorrect alignment: {cell.alignment.horizontal}/{cell.alignment.vertical}")
-        exit(1)
+        sys.exit(1)
 
 print("Header styles check: OK (Malgun Gothic 10pt Bold, EDF2F7 fill, thin border, center alignment)")
 
@@ -115,12 +119,12 @@ data_border_ok = True
 # We check a subset of rows to save time, e.g. first 20 rows
 check_limit = min(ws.max_row, 50)
 for row_idx in range(2, check_limit + 1):
-    # Check row height if specified, or if default is set
-    # Note: openpyxl might return None for row height if it's default, but defaultRowHeight is set
+    # Known limitation: When rows use defaultRowHeight (set via ws.sheet_format.defaultRowHeight),
+    # openpyxl returns None for individual row_dimensions[i].height. The per-row check below
+    # will only catch rows with explicitly set non-20 heights. For default height verification,
+    # check ws.sheet_format.defaultRowHeight instead.
     row_height = ws.row_dimensions[row_idx].height
-    # We set defaultRowHeight to 20 in collect_etf_data.py?
-    # Wait, in collect_etf_data.py line 361: ws.row_dimensions[row].height = 20
-    if row_height != 20 and row_height is not None:
+    if row_height is not None and row_height != 20:
         print(f"Warning: Row {row_idx} height is {row_height}, expected 20 or default")
         
     for col_idx in range(1, len(expected_cols) + 1):
@@ -185,22 +189,22 @@ for row_idx in range(2, check_limit + 1):
 if data_font_ok:
     print("Data font check: OK (Malgun Gothic 10pt)")
 else:
-    exit(1)
+    sys.exit(1)
 
 if data_border_ok:
     print("Data border check: OK (Thin border)")
 else:
-    exit(1)
+    sys.exit(1)
 
 if data_alignment_ok:
     print("Data alignment check: OK (Center/Left/Right alignments)")
 else:
-    exit(1)
+    sys.exit(1)
 
 if data_format_ok:
     print("Data number format check: OK (@, #,##0, 0.000%, 0.00% formats)")
 else:
-    exit(1)
+    sys.exit(1)
 
 # Check auto column widths
 for col_idx in range(1, len(expected_cols) + 1):
@@ -218,6 +222,6 @@ print("\n=== Data Sample (First 5 rows) ===")
 print(df.head().to_string(index=False))
 
 # Check size constraint
-assert len(df) > 1000, f"Expected more than 1000 ETFs, but got {len(df)}"
+assert len(df) >= MIN_EXPECTED_ETFS, f"Expected at least {MIN_EXPECTED_ETFS} ETFs, but got {len(df)}"
 print(f"Verification Successful! Data is valid and style guidelines are met perfectly. File: {file_path}")
 wb.close()

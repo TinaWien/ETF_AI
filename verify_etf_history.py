@@ -5,7 +5,7 @@ import pandas as pd
 def verify_history():
     print("=== Starting ETF CSV History Verification ===")
     today_str = datetime.date.today().strftime("%Y%m%d")
-    output_dir = "/Users/tina/Documents/ETF_AI/output"
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
     
     timeframes = ["daily", "weekly", "monthly"]
     price_types = ["actual", "adjusted"]
@@ -51,6 +51,14 @@ def verify_history():
                 continue
             print(" - Data presence: OK")
             
+            # Minimum row count sanity check — daily data should have at least 100 rows
+            MIN_EXPECTED_ROWS = 100
+            if len(df) < MIN_EXPECTED_ROWS:
+                print(f" - Error: Expected at least {MIN_EXPECTED_ROWS} rows, but got {len(df)}.")
+                all_success = False
+                continue
+            print(f" - Minimum row count check: OK ({len(df)} >= {MIN_EXPECTED_ROWS})")
+            
             # 3. Numeric constraints validation
             # Check for NaN
             if df.isnull().any().any():
@@ -58,6 +66,24 @@ def verify_history():
                 all_success = False
                 continue
             print(" - Null check: OK")
+            
+            # Duplicate row check — no duplicate (날짜, 종목코드) pairs should exist
+            dup_count = df.duplicated(subset=['날짜', '종목코드']).sum()
+            if dup_count > 0:
+                print(f" - Error: Found {dup_count} duplicate (날짜, 종목코드) pairs.")
+                all_success = False
+                continue
+            print(" - Duplicate check: OK (no duplicate date-ticker pairs)")
+            
+            # Date format validation — check that 날짜 matches YYYY-MM-DD pattern
+            import re
+            bad_dates = df[~df['날짜'].astype(str).str.match(r'^\d{4}-\d{2}-\d{2}$')]
+            if not bad_dates.empty:
+                print(f" - Error: Found {len(bad_dates)} rows with invalid date format (expected YYYY-MM-DD).")
+                print(bad_dates.head(3))
+                all_success = False
+                continue
+            print(" - Date format check: OK (YYYY-MM-DD)")
             
             # Date & Ticker sorting check (Strict order check)
             expected_sorted_df = df.sort_values(by=['날짜', '종목코드']).reset_index(drop=True)
@@ -91,7 +117,7 @@ def verify_history():
                 print(bad_tickers.head(3))
                 all_success = False
                 continue
-            print(" - Ticker codes format: OK (6 digits alphanumeric)")
+            print(" - Ticker codes format: OK (6-digit numeric)")
             
             # Fallback source labels
             sources = df['출처'].unique()
