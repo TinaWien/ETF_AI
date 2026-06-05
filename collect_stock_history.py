@@ -23,6 +23,9 @@ HEADERS = {
 }
 
 session = requests.Session()
+adapter = requests.adapters.HTTPAdapter(pool_connections=30, pool_maxsize=30)
+session.mount("https://", adapter)
+session.mount("http://", adapter)
 session.headers.update(HEADERS)
 
 # ==============================================================================
@@ -198,6 +201,34 @@ def fetch_from_yahoo(code: str, timeframe: str, start_date: str, end_date: str, 
 # ==============================================================================
 # Fallback Loop
 # ==============================================================================
+def sanitize_and_fix_prices(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    if df is None or df.empty:
+        return df
+    
+    # 1. Drop rows with invalid or zero close prices
+    df = df.dropna(subset=['종가'])
+    df = df[df['종가'] > 0].copy()
+    if df.empty:
+        return None
+        
+    # 2. If open, high, or low is zero/NaN, fill them with close price
+    for col in ['시가', '고가', '저가']:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        df.loc[df[col] <= 0, col] = df.loc[df[col] <= 0, '종가']
+        
+    # 3. Ensure logical constraint: High >= Low
+    bad_hl = df['고가'] < df['저가']
+    if bad_hl.any():
+        price_cols = ['시가', '고가', '저가', '종가']
+        df.loc[bad_hl, '고가'] = df.loc[bad_hl, price_cols].max(axis=1)
+        df.loc[bad_hl, '저가'] = df.loc[bad_hl, price_cols].min(axis=1)
+        
+    # 4. Cast all price columns to integer
+    for col in ['시가', '고가', '저가', '종가']:
+        df[col] = df[col].round().astype(int)
+        
+    return df
+
 def get_single_ticker_price(code: str, price_type: str, timeframe: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     df = None
     
@@ -221,6 +252,9 @@ def get_single_ticker_price(code: str, price_type: str, timeframe: str, start_da
         except Exception:
             df = None
             
+    if df is not None and not df.empty:
+        df = sanitize_and_fix_prices(df)
+        
     if df is not None and not df.empty:
         start_iso = to_iso_format(start_date)
         end_iso = to_iso_format(end_date)
@@ -302,20 +336,24 @@ def main() -> None:
     
     # 2. Identify codes to collect
     if args.code:
-        code_list = [c.strip() for c in args.code.split(",") if c.strip()]
-        print(f"Targeting specified stock codes: {code_list}")
+        code_list_day = [c.strip() for c in args.code.split(",") if c.strip()]
+        code_list_weekly_monthly = code_list_day
+        print(f"Targeting specified stock codes for all timeframes: {code_list_day}")
     else:
         if args.top.lower() == "all":
-            code_list = load_top_stocks(4000) # Load all stocks
+            code_list_day = load_top_stocks(4500) # Load all stocks
         else:
             try:
                 top_n = int(args.top)
             except ValueError:
                 top_n = 100
-            code_list = load_top_stocks(top_n)
-        print(f"Targeting top {len(code_list)} stocks by market cap.")
+            code_list_day = load_top_stocks(top_n)
         
-    if not code_list:
+        # Weekly/Monthly always targets all stocks (up to 4500)
+        code_list_weekly_monthly = load_top_stocks(4500)
+        print(f"Targeting top {len(code_list_day)} stocks for daily, and all {len(code_list_weekly_monthly)} stocks for weekly/monthly.")
+        
+    if not code_list_day:
         print("No stock codes identified. Exiting.")
         return
         
@@ -334,16 +372,17 @@ def main() -> None:
     # Loop over timeframes
     for tf in timeframes:
         label = timeframe_labels[tf]
+        current_codes = code_list_day if tf == "day" else code_list_weekly_monthly
         
         # A. Actual Prices (실제가격)
-        df_act = get_multiple_prices(code_list, "actual", tf, start_date, end_date)
+        df_act = get_multiple_prices(current_codes, "actual", tf, start_date, end_date)
         act_filename = f"Stock_{today_str}_actual_{label}.csv"
         act_path = os.path.join(OUTPUT_DIR, act_filename)
         df_act.to_csv(act_path, index=False, encoding="utf-8-sig")
         print(f"Saved actual prices to: {act_path} (rows: {len(df_act)})")
         
         # B. Adjusted Prices (수정가격)
-        df_adj = get_multiple_prices(code_list, "adjusted", tf, start_date, end_date)
+        df_adj = get_multiple_prices(current_codes, "adjusted", tf, start_date, end_date)
         adj_filename = f"Stock_{today_str}_adjusted_{label}.csv"
         adj_path = os.path.join(OUTPUT_DIR, adj_filename)
         df_adj.to_csv(adj_path, index=False, encoding="utf-8-sig")
