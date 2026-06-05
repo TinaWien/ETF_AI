@@ -78,8 +78,8 @@ def verify_report():
             return False
             
         # Sector validations
-        if sam_row["KRX업종"] != "반도체와반도체장비":
-            print(f"Error: Samsung Electronics KRX Sector is {sam_row['KRX업종']}, expected '반도체와반도체장비'")
+        if sam_row["KRX업종"] != "전기·전자":
+            print(f"Error: Samsung Electronics KRX Sector is {sam_row['KRX업종']}, expected '전기·전자'")
             return False
         if sam_row["WICS업종"] != "반도체와반도체장비":
             print(f"Error: Samsung Electronics WICS Sector is {sam_row['WICS업종']}, expected '반도체와반도체장비'")

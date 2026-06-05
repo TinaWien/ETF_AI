@@ -67,65 +67,8 @@ def clean_float_ratio(val_str: str) -> float:
         return None
 
 # ==============================================================================
-# Bulk Data Crawlers (KRX Sectors, Dividends, Alert Lists)
+# Bulk Data Crawlers (Dividends, Alert Lists)
 # ==============================================================================
-def fetch_krx_sector_map() -> dict:
-    """Scrapes KRX industry sectors from Naver Upjong list in bulk to avoid individual requests."""
-    print("Collecting KRX sector mappings in bulk...")
-    upjong_map = {}
-    
-    # 1. Get all upjong categories
-    url_main = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
-    try:
-        r = session.get(url_main, timeout=10)
-        r.raise_for_status()
-        html = r.content.decode("cp949", errors="ignore")
-        soup = BeautifulSoup(html, "html.parser")
-        
-        # Links format: /sise/sise_group_detail.naver?type=upjong&no=XXX
-        links = soup.find_all("a", href=re.compile(r"/sise/sise_group_detail\.naver\?type=upjong"))
-        categories = []
-        for l in links:
-            href = l.get("href", "")
-            no_match = re.search(r"no=(\d+)", href)
-            if no_match:
-                categories.append({
-                    "no": no_match.group(1),
-                    "name": l.text.strip()
-                })
-                
-        # 2. Fetch constituents of each category in parallel
-        def fetch_sector_detail(cat):
-            cat_no = cat["no"]
-            cat_name = cat["name"]
-            detail_url = f"https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={cat_no}"
-            local_map = {}
-            try:
-                r_detail = session.get(detail_url, timeout=10)
-                if r_detail.status_code == 200:
-                    detail_html = r_detail.content.decode("cp949", errors="ignore")
-                    detail_soup = BeautifulSoup(detail_html, "html.parser")
-                    # Find links matching code=\d{6}
-                    item_links = detail_soup.find_all("a", href=re.compile(r"code=\d{6}"))
-                    for il in item_links:
-                        code_match = re.search(r"code=(\d{6})", il.get("href", ""))
-                        if code_match:
-                            local_map[code_match.group(1)] = cat_name
-            except Exception as e:
-                print(f"Error fetching upjong detail no={cat_no}: {e}")
-            return local_map
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(fetch_sector_detail, c) for c in categories]
-            for future in as_completed(futures):
-                upjong_map.update(future.result())
-                
-    except Exception as e:
-        print(f"Error building KRX sector map: {e}")
-        
-    print(f"KRX Sector mappings built: {len(upjong_map)} stocks")
-    return upjong_map
-
 def fetch_dividend_map() -> dict:
     """Scrapes dividend list page from Naver Finance to build a dict of {code: dividend}."""
     print("Collecting dividend list in bulk...")
@@ -344,6 +287,7 @@ def fetch_single_stock_detail(code: str) -> dict:
     """Fetches details for a single stock by calling mobile API and WiseFN page."""
     detail = {
         "종목코드": code,
+        "KRX업종": "",
         "WICS업종": "",
         "투자의견": None,
         "목표주가": 0,
@@ -393,17 +337,24 @@ def fetch_single_stock_detail(code: str) -> dict:
             logging.warning(f'[{code}] detail fetch failed (API): {e}')
             time.sleep(1)
             
-    # 2. Fetch from WiseFN page (WICS industry sector)
+    # 2. Fetch from WiseFN page (WICS industry sector & KRX sector)
     url_wise = f"http://companyinfo.stock.naver.com/v1/company/c1010001.aspx?cmp_cd={code}"
     for attempt in range(max_retries):
         try:
             r_wise = session.get(url_wise, timeout=10)
             if r_wise.status_code == 200:
                 html = r_wise.text
+                
                 # Find WICS: 반도체와반도체장비
                 wics_match = re.search(r"WICS\s*:\s*([^<]+)", html)
                 if wics_match:
                     detail["WICS업종"] = wics_match.group(1).strip()
+                    
+                # Find KRX Sector (e.g. KOSPI : 코스피 전기·전자 or KOSDAQ : 코스닥 반도체)
+                krx_match = re.search(r"(?:KOSPI|KOSDAQ|KONEX)\s*:\s*([^<]+)", html)
+                if krx_match:
+                    raw_krx = krx_match.group(1).strip()
+                    detail["KRX업종"] = re.sub(r"^(코스피|코스닥|코넥스)\s+", "", raw_krx)
                 break
             elif r_wise.status_code == 429:
                 time.sleep(2 * (attempt + 1))
@@ -559,7 +510,6 @@ def main():
     # 2. Fetch bulk datasets
     k200_codes = fetch_kospi200_codes()
     k150_names = fetch_kosdaq150_names()
-    krx_sectors = fetch_krx_sector_map()
     dividend_map = fetch_dividend_map()
     alert_sets = fetch_alert_sets()
     
@@ -573,7 +523,6 @@ def main():
     # 4. Process calculations and bulk maps
     print("Post-processing and merging bulk maps...")
     types = []
-    krx_upjongs = []
     dividends = []
     alerts = []
     
@@ -596,13 +545,10 @@ def main():
         else:
             types.append(mkt)
             
-        # B. KRX업종
-        krx_upjongs.append(krx_sectors.get(code, ""))
-        
-        # C. 배당금
+        # B. 배당금
         dividends.append(dividend_map.get(code, 0))
         
-        # D. 관리종목 (Alert Flagging)
+        # C. 관리종목 (Alert Flagging)
         flags = []
         if code in alert_sets["management"]:
             flags.append("관리종목")
@@ -618,7 +564,7 @@ def main():
         alerts.append(", ".join(flags) if flags else "")
         
     df_merged["유형"] = types
-    df_merged["KRX업종"] = krx_upjongs
+    df_merged["KRX업종"] = df_merged["KRX업종"].fillna("")
     df_merged["배당금"] = dividends
     df_merged["관리종목"] = alerts
     
