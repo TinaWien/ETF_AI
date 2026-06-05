@@ -3,7 +3,7 @@ import datetime
 import pandas as pd
 
 def verify_history():
-    print("=== Starting CSV History Verification ===")
+    print("=== Starting ETF CSV History Verification ===")
     today_str = datetime.date.today().strftime("%Y%m%d")
     output_dir = "/Users/tina/Documents/ETF_AI/output"
     
@@ -15,7 +15,7 @@ def verify_history():
     
     for tf in timeframes:
         for pt in price_types:
-            filename = f"Stock_{today_str}_{pt}_{tf}.csv"
+            filename = f"ETF_{today_str}_{pt}_{tf}.csv"
             filepath = os.path.join(output_dir, filename)
             
             print(f"\nChecking file: {filename}")
@@ -60,11 +60,6 @@ def verify_history():
             print(" - Null check: OK")
             
             # Date sorting check
-            # Convert Date to datetime for comparison
-            dates = pd.to_datetime(df['날짜'])
-            is_sorted = dates.is_monotonic_increasing
-            # Actually, because it is sorted by ['날짜', '종목코드'], dates should be monotonic or at least locally sorted
-            # Since multiple tickers are present on the same date, we check sorting by group
             # Group by ticker and check if dates are monotonic increasing
             ticker_groups = df.groupby('종목코드')
             sorting_ok = True
@@ -115,10 +110,10 @@ def verify_history():
             print(f" - Sources: OK {list(sources)}")
             
     if all_success:
-        print("\n=== All CSV History Verifications Passed! ===")
+        print("\n=== All ETF CSV History Verifications Passed! ===")
         return True
     else:
-        print("\n=== CSV History Verification Failed! ===")
+        print("\n=== ETF CSV History Verification Failed! ===")
         return False
 
 if __name__ == "__main__":
